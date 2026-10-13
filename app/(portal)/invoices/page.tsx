@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { billingService } from "@/lib/services/billing.service";
 import { paymentsService } from "@/lib/services/payments.service";
+import { exchangeRatesService, type NormalizedRates } from "@/lib/services/exchange-rates.service";
 import type { Invoice, Payment, UnitBalance } from "@/types/models";
 import { formatCurrency, formatDate, formatPeriod } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ export default function InvoicesAndPaymentsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [balance, setBalance] = useState<UnitBalance | null>(null);
+  const [rates, setRates] = useState<NormalizedRates | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -66,10 +68,11 @@ export default function InvoicesAndPaymentsPage() {
     }
 
     try {
-      const [invoicesData, paymentsData, balanceData] = await Promise.allSettled([
+      const [invoicesData, paymentsData, balanceData, ratesData] = await Promise.allSettled([
         billingService.getUnitInvoices(activeUnit.unit_id),
         paymentsService.getPayments(activeUnit.unit_id),
         billingService.getUnitBalance(activeUnit.unit_id),
+        exchangeRatesService.getLatestRates(),
       ]);
 
       if (invoicesData.status === "fulfilled") {
@@ -80,6 +83,9 @@ export default function InvoicesAndPaymentsPage() {
       }
       if (balanceData.status === "fulfilled") {
         setBalance(balanceData.value);
+      }
+      if (ratesData.status === "fulfilled") {
+        setRates(ratesData.value);
       }
     } catch (error) {
       console.error("Error loading data:", error);
@@ -180,8 +186,25 @@ export default function InvoicesAndPaymentsPage() {
           </div>
         </div>
 
+        {/* Live Rates Banner */}
+        {rates && (
+          <div className="pt-3 pb-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-semibold text-foreground flex items-center gap-1.5">
+              Tasas Oficiales BCV:
+            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 text-xs font-mono font-bold">
+                🇪🇺 Euro Oficial: Bs. {rates.euroOficial.toFixed(2)}
+              </Badge>
+              <Badge variant="outline" className="bg-muted text-muted-foreground border-border text-xs font-mono">
+                🇻🇪 Dólar BCV: Bs. {rates.dolarOficial.toFixed(2)}
+              </Badge>
+            </div>
+          </div>
+        )}
+
         {/* Financial KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-3">
           {/* Card 1: Total Debt / Solvency */}
           <div className="bg-background rounded-xl p-4 border border-border/80 shadow-xs flex items-center justify-between">
             <div>
@@ -200,8 +223,18 @@ export default function InvoicesAndPaymentsPage() {
                   </span>
                 )}
               </div>
+              {rates && rates.euroOficial > 0 && totalDebt > 0 && (
+                <div className="mt-1.5 text-[11px] text-muted-foreground font-mono space-y-0.5">
+                  <span className="block font-medium text-foreground">
+                    ≈ Bs. {(totalDebt * rates.euroOficial).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-[10px] block text-muted-foreground">
+                    (a Tasa Euro BCV Bs. {rates.euroOficial.toFixed(2)})
+                  </span>
+                </div>
+              )}
             </div>
-            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
               totalDebt <= 0 ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"
             }`}>
               <DollarSign className="w-5 h-5" />
@@ -369,21 +402,36 @@ export default function InvoicesAndPaymentsPage() {
                       <div className="grid grid-cols-3 gap-2 text-center bg-background p-2.5 rounded-lg border border-border/60">
                         <div>
                           <span className="text-[11px] text-muted-foreground block">Monto Total</span>
-                          <span className="font-semibold text-sm text-foreground">
+                          <span className="font-semibold text-sm text-foreground block">
                             ${formatCurrency(inv.amount)}
                           </span>
+                          {rates?.euroOficial && (
+                            <span className="text-[10px] font-mono text-muted-foreground block">
+                              ≈ Bs. {(inv.amount * rates.euroOficial).toLocaleString("es-VE", { maximumFractionDigits: 0 })}
+                            </span>
+                          )}
                         </div>
                         <div>
                           <span className="text-[11px] text-muted-foreground block">Abonado</span>
-                          <span className="font-semibold text-sm text-emerald-600">
+                          <span className="font-semibold text-sm text-emerald-600 block">
                             ${formatCurrency(inv.paid_amount || 0)}
                           </span>
+                          {rates?.euroOficial && (inv.paid_amount || 0) > 0 && (
+                            <span className="text-[10px] font-mono text-emerald-600/80 block">
+                              ≈ Bs. {((inv.paid_amount || 0) * rates.euroOficial).toLocaleString("es-VE", { maximumFractionDigits: 0 })}
+                            </span>
+                          )}
                         </div>
                         <div>
                           <span className="text-[11px] text-muted-foreground block">Restante</span>
-                          <span className={`font-semibold text-sm ${remaining > 0 ? "text-amber-600 font-bold" : "text-foreground"}`}>
+                          <span className={`font-semibold text-sm block ${remaining > 0 ? "text-amber-600 font-bold" : "text-foreground"}`}>
                             ${formatCurrency(remaining)}
                           </span>
+                          {rates?.euroOficial && remaining > 0 && (
+                            <span className="text-[10px] font-mono text-amber-600/90 block font-semibold">
+                              ≈ Bs. {(remaining * rates.euroOficial).toLocaleString("es-VE", { maximumFractionDigits: 0 })}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -572,11 +620,31 @@ export default function InvoicesAndPaymentsPage() {
                 </div>
                 <div className="flex justify-between border-t border-border/80 pt-2 font-bold">
                   <span>Saldo Pendiente:</span>
-                  <span className="text-primary">
-                    ${formatCurrency(selectedInvoice.remaining ?? (selectedInvoice.amount - (selectedInvoice.paid_amount || 0)))}
-                  </span>
+                  <div className="text-right">
+                    <span className="text-primary block">
+                      ${formatCurrency(selectedInvoice.remaining ?? (selectedInvoice.amount - (selectedInvoice.paid_amount || 0)))}
+                    </span>
+                    {rates?.euroOficial && (
+                      <span className="text-xs font-mono font-medium text-foreground/80 block">
+                        ≈ Bs. {((selectedInvoice.remaining ?? (selectedInvoice.amount - (selectedInvoice.paid_amount || 0))) * rates.euroOficial).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              {/* Conversion and Abono notice */}
+              {rates && (
+                <div className="bg-primary/5 border border-primary/15 rounded-xl p-3 text-xs space-y-1">
+                  <div className="font-semibold text-primary flex items-center justify-between">
+                    <span>Opciones de Pago & Abonos:</span>
+                    <span className="font-mono text-[11px]">Tasa Euro: Bs. {rates.euroOficial.toFixed(2)}</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Puedes abonar una cantidad parcial (ej. $50 o $20) o liquidar la totalidad. La plataforma convertirá automáticamente a Bolívares a la tasa oficial del día.
+                  </p>
+                </div>
+              )}
 
               {/* Payments applied to this invoice */}
               <div className="space-y-2">

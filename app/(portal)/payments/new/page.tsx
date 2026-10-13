@@ -31,6 +31,7 @@ import {
   Info,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ExchangeRateCalculator } from "@/components/payments/ExchangeRateCalculator";
 
 function CreatePaymentForm() {
   const router = useRouter();
@@ -57,6 +58,7 @@ function CreatePaymentForm() {
   const [notes, setNotes] = useState<string>("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [conversionSummary, setConversionSummary] = useState<string>("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -169,10 +171,13 @@ function CreatePaymentForm() {
         };
       });
 
-      // Assemble note with phone if Pago Movil
+      // Assemble note with phone and exchange rate calculation
       let combinedNotes = notes.trim();
+      if (conversionSummary) {
+        combinedNotes = `${conversionSummary}${combinedNotes ? ` | ${combinedNotes}` : ""}`;
+      }
       if (method === "PAGO_MOVIL" && phone.trim()) {
-        combinedNotes = `Tel: ${phone.trim()} ${combinedNotes}`.trim();
+        combinedNotes = `Tel: ${phone.trim()} | ${combinedNotes}`.trim();
       }
 
       await paymentsService.reportPayment({
@@ -353,6 +358,26 @@ function CreatePaymentForm() {
                 <span className="text-xs">Efectivo / Zelle</span>
               </button>
             </div>
+
+            {/* Live Exchange Rate & Fractional Payment (Abonos) Calculator */}
+            {(() => {
+              const totalSelectedDebt = selectedInvoiceIds.length > 0
+                ? invoices
+                    .filter((i) => selectedInvoiceIds.includes(i.id))
+                    .reduce((acc, curr) => acc + (curr.remaining ?? (curr.amount - (curr.paid_amount || 0))), 0)
+                : (invoices.length > 0
+                    ? invoices.reduce((acc, curr) => acc + (curr.remaining ?? (curr.amount - (curr.paid_amount || 0))), 0)
+                    : undefined);
+
+              return (
+                <ExchangeRateCalculator
+                  usdAmount={parseFloat(amount) || 0}
+                  onUsdAmountChange={(newUsd) => setAmount(newUsd.toFixed(2))}
+                  totalInvoiceDebt={totalSelectedDebt}
+                  onCalculationChange={(details) => setConversionSummary(details.textSummary)}
+                />
+              );
+            })()}
 
             {/* Amount and Date */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
