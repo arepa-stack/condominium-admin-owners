@@ -2,6 +2,24 @@ import { apiClient } from "@/lib/api/client";
 import { APP_API_PREFIX } from "@/lib/utils/constants";
 import type { AuthResponse, LoginCredentials, User } from "@/types/models";
 
+function normalizeUser(user: any): User {
+  if (!user) return user;
+  const rawUnits = user.units || user.profile_units || [];
+  const normalizedUnits = rawUnits.map((u: any) => ({
+    unit_id: u.unit_id || u.unitId || u.id || "",
+    building_id: u.building_id || u.buildingId || "",
+    building_role: u.building_role || u.buildingRole || u.role || "",
+    is_primary: Boolean(u.is_primary ?? u.isPrimary ?? false),
+    unit_name: u.unit_name || u.unitName || u.name || (u.unit ? u.unit.name : undefined),
+    building_name: u.building_name || u.buildingName || (u.building ? u.building.name : undefined),
+  }));
+
+  return {
+    ...user,
+    units: normalizedUnits,
+  };
+}
+
 export const authService = {
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     const { data } = await apiClient.post<AuthResponse>("/auth/login", credentials);
@@ -36,14 +54,17 @@ export const authService = {
       throw new Error("Tu cuenta se encuentra inactiva. Contacta a la administración.");
     }
 
+    let userToStore = normalizeUser(data.user);
+
     // Try to get fresh profile data if possible
     try {
       const freshUser = await this.getCurrentUser();
       if (freshUser) {
-        data.user = freshUser;
+        userToStore = normalizeUser(freshUser);
+        data.user = userToStore;
       }
     } catch {
-      // Fallback to data.user from login
+      data.user = userToStore;
     }
 
     if (typeof window !== "undefined") {
@@ -55,12 +76,12 @@ export const authService = {
 
   async getCurrentUser(): Promise<User> {
     try {
-      const { data } = await apiClient.get<User>(`${APP_API_PREFIX}/users/me`);
-      return data;
+      const { data } = await apiClient.get<any>(`${APP_API_PREFIX}/users/me`);
+      return normalizeUser(data);
     } catch (error) {
       // Fallback: direct users/me
-      const { data } = await apiClient.get<User>("/users/me");
-      return data;
+      const { data } = await apiClient.get<any>("/users/me");
+      return normalizeUser(data);
     }
   },
 

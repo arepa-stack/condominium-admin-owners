@@ -1,7 +1,5 @@
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_ENVIOREMENT === "DEV"
-    ? "http://localhost:3000"
-    : process.env.NEXT_PUBLIC_API_URL || "https://condominium-api.nibs-tech.com";
+const rawUrl = process.env.NEXT_PUBLIC_API_URL || "https://condominium-api.nibs-tech.com";
+export const API_BASE_URL = rawUrl.replace(/\/$/, "");
 
 export const APP_NAME = "Apto Residentes";
 
