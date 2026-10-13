@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +27,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ShieldCheck,
-  Building,
+  KeyRound,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -37,13 +38,17 @@ import {
 } from "@/lib/services/onboarding.service";
 
 function RegisterForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const codeParam = searchParams.get("code");
 
-  const [buildings, setBuildings] = useState<BuildingPublic[]>([]);
-  const [selectedBuilding, setSelectedBuilding] = useState<BuildingPublic | null>(null);
+  // Step 1: Building code verification state
+  const [buildingCodeInput, setBuildingCodeInput] = useState(codeParam?.toUpperCase() || "");
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [verifiedBuilding, setVerifiedBuilding] = useState<BuildingPublic | null>(null);
+
+  // Step 2: Units & Resident form state
   const [units, setUnits] = useState<UnitPublic[]>([]);
+  const [isLoadingUnits, setIsLoadingUnits] = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState<string>("");
 
   const [firstName, setFirstName] = useState("");
@@ -52,78 +57,70 @@ function RegisterForm() {
   const [documentId, setDocumentId] = useState("");
   const [phone, setPhone] = useState("");
 
-  const [isLoadingBuildings, setIsLoadingBuildings] = useState(true);
-  const [isLoadingUnits, setIsLoadingUnits] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  // Load buildings on mount
-  useEffect(() => {
-    async function loadBuildings() {
-      setIsLoadingBuildings(true);
-      try {
-        const list = await onboardingService.getBuildings();
-        setBuildings(list);
-
-        if (codeParam) {
-          const match = list.find(
-            (b) => b.building_code?.toLowerCase() === codeParam.toLowerCase() || b.id === codeParam
-          );
-          if (match) {
-            setSelectedBuilding(match);
-          } else {
-            // Try fetching by code directly
-            try {
-              const b = await onboardingService.getBuildingByCode(codeParam);
-              setSelectedBuilding(b);
-            } catch {
-              console.warn("Could not find building by code param:", codeParam);
-            }
-          }
-        } else if (list.length > 0) {
-          // Default to Residencias Granada if available, otherwise first building
-          const granada = list.find((b) => b.name.toLowerCase().includes("granada"));
-          setSelectedBuilding(granada || list[0]);
-        }
-      } catch (err) {
-        console.error("Error loading buildings:", err);
-        toast.error("No se pudieron cargar los edificios disponibles.");
-      } finally {
-        setIsLoadingBuildings(false);
-      }
+  // Function to verify building code
+  const handleVerifyCode = async (codeToVerify?: string) => {
+    const code = (codeToVerify || buildingCodeInput).trim().toUpperCase();
+    if (!code) {
+      toast.error("Por favor ingresa el código de tu edificio.");
+      return;
     }
-    loadBuildings();
-  }, [codeParam]);
 
-  // Load units when selectedBuilding changes
-  useEffect(() => {
-    async function loadUnits() {
-      if (!selectedBuilding?.building_code) return;
+    setIsVerifyingCode(true);
+    try {
+      const building = await onboardingService.getBuildingByCode(code);
+      setVerifiedBuilding(building);
+      setBuildingCodeInput(building.building_code || code);
+      toast.success(`Edificio encontrado: ${building.name}`);
+
+      // Load units for this verified building
       setIsLoadingUnits(true);
-      setSelectedUnitId("");
       try {
-        const unitList = await onboardingService.getUnitsByCode(selectedBuilding.building_code);
-        // Sort units by natural apartment numbering
+        const unitList = await onboardingService.getUnitsByCode(code);
         const sorted = [...unitList].sort((a, b) =>
           a.name.localeCompare(b.name, undefined, { numeric: true })
         );
         setUnits(sorted);
-      } catch (err) {
-        console.error("Error loading units:", err);
+      } catch (unitErr) {
+        console.error("Error loading units:", unitErr);
         toast.error("No se pudieron cargar las unidades de este edificio.");
         setUnits([]);
       } finally {
         setIsLoadingUnits(false);
       }
+    } catch (err: any) {
+      console.error("Code verification error:", err);
+      setVerifiedBuilding(null);
+      setUnits([]);
+      toast.error("Código no válido. Verifica el código suministrado por tu junta de condominio.");
+    } finally {
+      setIsVerifyingCode(false);
     }
-    loadUnits();
-  }, [selectedBuilding]);
+  };
+
+  // If URL has ?code=..., auto-verify on mount
+  useEffect(() => {
+    if (codeParam) {
+      const clean = codeParam.trim().toUpperCase();
+      setBuildingCodeInput(clean);
+      handleVerifyCode(clean);
+    }
+  }, [codeParam]);
+
+  // Reset verification to enter a different code
+  const handleResetBuilding = () => {
+    setVerifiedBuilding(null);
+    setUnits([]);
+    setSelectedUnitId("");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedBuilding?.building_code) {
-      toast.error("Por favor selecciona tu edificio o condominio.");
+    if (!verifiedBuilding?.building_code) {
+      toast.error("Debes validar el código de tu edificio primero.");
       return;
     }
     if (!selectedUnitId) {
@@ -146,7 +143,7 @@ function RegisterForm() {
     setIsSubmitting(true);
     try {
       await onboardingService.submitRegistration({
-        building_code: selectedBuilding.building_code,
+        building_code: verifiedBuilding.building_code,
         unit_id: selectedUnitId,
         first_name: firstName.trim(),
         last_name: lastName.trim(),
@@ -186,7 +183,7 @@ function RegisterForm() {
             </h2>
             <p className="text-sm text-muted-foreground max-w-sm mx-auto">
               Tu solicitud para la unidad <strong>{selectedUnitName}</strong> en{" "}
-              <strong>{selectedBuilding?.name}</strong> fue enviada correctamente.
+              <strong>{verifiedBuilding?.name}</strong> fue enviada correctamente.
             </p>
           </div>
 
@@ -203,8 +200,12 @@ function RegisterForm() {
               <span className="text-muted-foreground">Cédula:</span>
               <span className="font-mono text-foreground">{documentId}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Edificio:</span>
+              <span className="font-medium text-foreground">{verifiedBuilding?.name}</span>
+            </div>
             <div className="pt-2 border-t border-border/60 text-muted-foreground">
-              La junta de condominio o administración validará tus datos para habilitar tu cuenta. Podrás iniciar sesión con tu correo una vez aprobada.
+              La junta de condominio o administración validará tus datos para habilitar tu cuenta. Podrás iniciar sesión una vez aprobada.
             </div>
           </div>
 
@@ -226,209 +227,266 @@ function RegisterForm() {
       <CardHeader className="space-y-1 pb-4 text-center">
         <CardTitle className="text-xl font-bold">Registro de Residente</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">
-          Solicita tu acceso al portal del condominio en pocos pasos
+          Ingresa el código único de tu edificio para solicitar tu acceso
         </CardDescription>
       </CardHeader>
 
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Building Selection */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-              Edificio / Condominio *
-            </Label>
-            {isLoadingBuildings ? (
-              <div className="h-10 rounded-md border border-border bg-muted/30 flex items-center px-3 text-xs text-muted-foreground">
-                <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin text-primary" />
-                Cargando edificios disponibles...
+        {/* Step 1: Building Code Gate */}
+        {!verifiedBuilding ? (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 text-xs text-muted-foreground space-y-1.5">
+              <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                <KeyRound className="w-4 h-4 text-primary" />
+                <span>Paso 1: Código de tu Edificio</span>
               </div>
-            ) : (
-              <Select
-                value={selectedBuilding?.id || ""}
-                onValueChange={(val) => {
-                  const b = buildings.find((item) => item.id === val);
-                  if (b) setSelectedBuilding(b);
-                }}
-              >
-                <SelectTrigger className="h-10 text-xs bg-background/50">
-                  <SelectValue placeholder="Selecciona tu edificio" />
-                </SelectTrigger>
-                <SelectContent>
-                  {buildings.map((b) => (
-                    <SelectItem key={b.id} value={b.id} className="text-xs">
-                      <div className="flex items-center gap-2">
-                        <Building className="w-3.5 h-3.5 text-primary" />
-                        <span>{b.name}</span>
-                        {b.address && (
-                          <span className="text-[10px] text-muted-foreground">
-                            ({b.address})
-                          </span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
+              <p className="text-[11px] leading-relaxed">
+                Cada condominio cuenta con un código único de seguridad para evitar registros no autorizados. Solicítalo a tu junta de condominio o escanéalo del cartel del edificio.
+              </p>
+            </div>
 
-          {/* Unit / Apartamento Selection */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold flex items-center gap-1.5">
-              <Home className="w-3.5 h-3.5 text-muted-foreground" />
-              Apartamento / Unidad *
-            </Label>
-            {isLoadingUnits ? (
-              <div className="h-10 rounded-md border border-border bg-muted/30 flex items-center px-3 text-xs text-muted-foreground">
-                <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin text-primary" />
-                Cargando apartamentos...
-              </div>
-            ) : (
-              <Select
-                value={selectedUnitId}
-                onValueChange={setSelectedUnitId}
-                disabled={!selectedBuilding || units.length === 0}
-              >
-                <SelectTrigger className="h-10 text-xs bg-background/50">
-                  <SelectValue
-                    placeholder={
-                      !selectedBuilding
-                        ? "Primero selecciona tu edificio"
-                        : units.length === 0
-                        ? "No hay unidades disponibles"
-                        : "Selecciona tu apartamento (ej. 14, 23...)"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent className="max-h-56">
-                  {units.map((u) => (
-                    <SelectItem key={u.id} value={u.id} className="text-xs">
-                      Apartamento {u.name} {u.floor ? `(Piso ${u.floor})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {/* First & Last Name */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div className="space-y-1.5">
-              <Label htmlFor="firstName" className="text-xs font-semibold">
-                Nombre *
+            <div className="space-y-2">
+              <Label htmlFor="buildingCode" className="text-xs font-semibold">
+                Código del Edificio *
               </Label>
-              <div className="relative">
-                <User className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    id="buildingCode"
+                    placeholder="Ej. COND-63178E55"
+                    value={buildingCodeInput}
+                    onChange={(e) => setBuildingCodeInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleVerifyCode();
+                      }
+                    }}
+                    className="h-11 text-sm font-mono tracking-wider uppercase font-semibold bg-background/50 pl-3"
+                    disabled={isVerifyingCode}
+                    autoFocus
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => handleVerifyCode()}
+                  disabled={isVerifyingCode || !buildingCodeInput.trim()}
+                  className="h-11 px-4 text-xs font-semibold gap-1.5 shrink-0"
+                >
+                  {isVerifyingCode ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      Verificar
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3.5 border-t border-border/60 text-center space-y-2">
+              <div className="text-xs text-muted-foreground">
+                ¿Ya tienes cuenta activa?{" "}
+                <Link href="/login" className="font-semibold text-primary hover:underline">
+                  Inicia sesión aquí
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Step 2: Unlocked Form for Verified Building */
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Verified Building Card */}
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">
+                      Edificio Verificado
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-foreground truncate">
+                    {verifiedBuilding.name}
+                  </p>
+                  {verifiedBuilding.address && (
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {verifiedBuilding.address}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleResetBuilding}
+                className="h-8 px-2 text-[11px] text-muted-foreground hover:text-foreground shrink-0 gap-1"
+                title="Cambiar código de edificio"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Cambiar
+              </Button>
+            </div>
+
+            {/* Unit / Apartamento Selection */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold flex items-center gap-1.5">
+                <Home className="w-3.5 h-3.5 text-muted-foreground" />
+                Apartamento / Unidad *
+              </Label>
+              {isLoadingUnits ? (
+                <div className="h-10 rounded-md border border-border bg-muted/30 flex items-center px-3 text-xs text-muted-foreground">
+                  <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin text-primary" />
+                  Cargando apartamentos del edificio...
+                </div>
+              ) : (
+                <Select
+                  value={selectedUnitId}
+                  onValueChange={setSelectedUnitId}
+                  disabled={units.length === 0}
+                >
+                  <SelectTrigger className="h-10 text-xs bg-background/50">
+                    <SelectValue
+                      placeholder={
+                        units.length === 0
+                          ? "No hay unidades disponibles"
+                          : "Selecciona tu apartamento (ej. 14, 23...)"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-56">
+                    {units.map((u) => (
+                      <SelectItem key={u.id} value={u.id} className="text-xs">
+                        Apartamento {u.name} {u.floor ? `(Piso ${u.floor})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            {/* First & Last Name */}
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="space-y-1.5">
+                <Label htmlFor="firstName" className="text-xs font-semibold">
+                  Nombre *
+                </Label>
+                <div className="relative">
+                  <User className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    id="firstName"
+                    placeholder="Ej. Juan"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    required
+                    className="pl-8 h-10 text-xs bg-background/50"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="lastName" className="text-xs font-semibold">
+                  Apellido *
+                </Label>
                 <Input
-                  id="firstName"
-                  placeholder="Ej. Juan"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
+                  id="lastName"
+                  placeholder="Ej. Pérez"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
                   required
-                  className="pl-8 h-10 text-xs bg-background/50"
+                  className="h-10 text-xs bg-background/50"
                 />
               </div>
             </div>
 
+            {/* Email */}
             <div className="space-y-1.5">
-              <Label htmlFor="lastName" className="text-xs font-semibold">
-                Apellido *
+              <Label htmlFor="email" className="text-xs font-semibold flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-muted-foreground" />
+                Correo Electrónico *
               </Label>
               <Input
-                id="lastName"
-                placeholder="Ej. Pérez"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
+                id="email"
+                type="email"
+                placeholder="tu.correo@ejemplo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="email"
                 className="h-10 text-xs bg-background/50"
               />
             </div>
-          </div>
 
-          {/* Email */}
-          <div className="space-y-1.5">
-            <Label htmlFor="email" className="text-xs font-semibold flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-muted-foreground" />
-              Correo Electrónico *
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              placeholder="tu.correo@ejemplo.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-              className="h-10 text-xs bg-background/50"
-            />
-          </div>
+            {/* Document ID & Phone */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="documentId" className="text-xs font-semibold flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+                  Cédula / DNI *
+                </Label>
+                <Input
+                  id="documentId"
+                  placeholder="V-12345678"
+                  value={documentId}
+                  onChange={(e) => setDocumentId(e.target.value)}
+                  required
+                  className="h-10 text-xs font-mono bg-background/50"
+                />
+              </div>
 
-          {/* Document ID & Phone */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="documentId" className="text-xs font-semibold flex items-center gap-1.5">
-                <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
-                Cédula / DNI *
-              </Label>
-              <Input
-                id="documentId"
-                placeholder="V-12345678"
-                value={documentId}
-                onChange={(e) => setDocumentId(e.target.value)}
-                required
-                className="h-10 text-xs font-mono bg-background/50"
-              />
+              <div className="space-y-1.5">
+                <Label htmlFor="phone" className="text-xs font-semibold flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-muted-foreground" />
+                  Teléfono (Opcional)
+                </Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  placeholder="0414-1234567"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="h-10 text-xs font-mono bg-background/50"
+                />
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="phone" className="text-xs font-semibold flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-muted-foreground" />
-                Teléfono (Opcional)
-              </Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="0414-1234567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="h-10 text-xs font-mono bg-background/50"
-              />
+            {/* Submit Button */}
+            <Button
+              type="submit"
+              disabled={isSubmitting || isLoadingUnits || !selectedUnitId}
+              className="w-full h-11 text-sm font-semibold shadow-md mt-3 gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Enviando solicitud...
+                </>
+              ) : (
+                <>
+                  Enviar Solicitud de Registro
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </Button>
+
+            <p className="text-[11px] text-muted-foreground text-center pt-1">
+              Al registrarte, tu solicitud pasará a validación por parte de la administración del condominio.
+            </p>
+
+            <div className="mt-4 pt-3 border-t border-border/60 text-center space-y-2">
+              <div className="text-xs text-muted-foreground">
+                ¿Ya tienes cuenta activa?{" "}
+                <Link href="/login" className="font-semibold text-primary hover:underline">
+                  Inicia sesión aquí
+                </Link>
+              </div>
             </div>
-          </div>
-
-          {/* Submit Button */}
-          <Button
-            type="submit"
-            disabled={isSubmitting || isLoadingBuildings || isLoadingUnits}
-            className="w-full h-11 text-sm font-semibold shadow-md mt-3 gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Enviando solicitud...
-              </>
-            ) : (
-              <>
-                Enviar Solicitud de Registro
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
-          </Button>
-
-          <p className="text-[11px] text-muted-foreground text-center pt-1">
-            Al registrarte, tu solicitud pasará a validación por parte de la administración del edificio.
-          </p>
-        </form>
-
-        <div className="mt-5 pt-3.5 border-t border-border/60 text-center space-y-2">
-          <div className="text-xs text-muted-foreground">
-            ¿Ya tienes cuenta activa?{" "}
-            <Link href="/login" className="font-semibold text-primary hover:underline">
-              Inicia sesión aquí
-            </Link>
-          </div>
-        </div>
+          </form>
+        )}
       </CardContent>
     </Card>
   );
