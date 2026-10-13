@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Building2, Mail, Lock, Loader2, Eye, EyeOff, ShieldCheck, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -147,9 +148,16 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <div className="mt-6 pt-4 border-t border-border/60 text-center">
-              <p className="text-xs text-muted-foreground flex items-center justify-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <div className="mt-6 pt-4 border-t border-border/60 text-center space-y-3">
+              <div className="text-xs text-muted-foreground">
+                ¿Aún no tienes cuenta registrada?{" "}
+                <Link href="/register" className="font-semibold text-primary hover:underline">
+                  Regístrate aquí
+                </Link>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground flex items-center justify-center gap-1.5 pt-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 Acceso seguro y cifrado para residentes y propietarios
               </p>
             </div>
